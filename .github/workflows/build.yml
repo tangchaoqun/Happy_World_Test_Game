@@ -1,0 +1,81 @@
+name: Build HappyWorld
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    name: Build Release (Win32)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache cocos2d-x external dependencies
+        id: cache-externals
+        uses: actions/cache@v4
+        with:
+          path: cocos2d-x/external
+          key: cocos2d-externals-metal-support-22
+
+      - name: Download cocos2d-x external dependencies
+        if: steps.cache-externals.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $extDir = "cocos2d-x\external"
+          $downloadUrl = "https://github.com/cocos2d/cocos2d-x-3rd-party-libs-bin/archive/metal-support-22.zip"
+          $zipPath = "$env:TEMP\cocos2d-externals.zip"
+
+          Write-Host "Downloading external dependencies..."
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+
+          Write-Host "Extracting..."
+          $tempExtract = "$env:TEMP\cocos2d-extract"
+          Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
+
+          $extractedDir = Join-Path $tempExtract "cocos2d-x-3rd-party-libs-bin-metal-support-22"
+
+          # Clean external folder (keep config.json)
+          $configBackup = Get-Content "$extDir\config.json" -Raw
+          Get-ChildItem -Path $extDir -Exclude "config.json" | Remove-Item -Recurse -Force
+
+          # Copy extracted files to external
+          Copy-Item -Path "$extractedDir\*" -Destination $extDir -Recurse -Force
+
+          # Restore config.json
+          Set-Content "$extDir\config.json" $configBackup
+
+          # Move fbx-conv to tools (as per config.json move_dirs)
+          if (Test-Path "$extDir\fbx-conv") {
+            $toolsDir = "tools\fbx-conv"
+            if (Test-Path $toolsDir) { Remove-Item $toolsDir -Recurse -Force }
+            New-Item -ItemType Directory -Path "tools" -Force | Out-Null
+            Move-Item "$extDir\fbx-conv" $toolsDir
+          }
+
+          Remove-Item $zipPath -Force
+          Remove-Item $tempExtract -Recurse -Force
+          Write-Host "External dependencies installed."
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -S . -B build32 -G "Visual Studio 17 2022" -A Win32
+
+      - name: Build HappyWorld
+        shell: pwsh
+        run: |
+          cmake --build build32 --target HappyWorld --config Release -- /m /v:m /nologo
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HappyWorld-Win32-Release
+          path: build32/bin/HappyWorld/Release/
+          retention-days: 30
