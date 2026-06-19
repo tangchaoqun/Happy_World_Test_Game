@@ -12,27 +12,39 @@ jobs:
     name: Build Release (Win32)
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (no submodules)
         uses: actions/checkout@v4
+
+      - name: Cache cocos2d-x engine
+        id: cache-cocos2dx
+        uses: actions/cache@v4
         with:
-          submodules: recursive
+          path: cocos2d-x
+          key: cocos2d-x-v4-shallow
+
+      - name: Clone cocos2d-x engine
+        if: steps.cache-cocos2dx.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if (Test-Path "cocos2d-x") { Remove-Item "cocos2d-x" -Recurse -Force }
+          git clone --depth 1 --branch v4 https://github.com/cocos2d/cocos2d-x.git cocos2d-x
+          Write-Host "cocos2d-x cloned successfully."
 
       - name: Cache cocos2d-x external dependencies
         id: cache-externals
         uses: actions/cache@v4
         with:
-          path: cocos2d-x/external
+          path: cocos2d-x/external-prebuilt
           key: cocos2d-externals-metal-support-22
 
       - name: Download cocos2d-x external dependencies
         if: steps.cache-externals.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $extDir = "cocos2d-x\external"
           $downloadUrl = "https://github.com/cocos2d/cocos2d-x-3rd-party-libs-bin/archive/metal-support-22.zip"
           $zipPath = "$env:TEMP\cocos2d-externals.zip"
 
-          Write-Host "Downloading external dependencies..."
+          Write-Host "Downloading external dependencies (~146MB)..."
           Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
 
           Write-Host "Extracting..."
@@ -40,28 +52,42 @@ jobs:
           Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
 
           $extractedDir = Join-Path $tempExtract "cocos2d-x-3rd-party-libs-bin-metal-support-22"
+          $prebuiltDir = "cocos2d-x\external-prebuilt"
+          New-Item -ItemType Directory -Path $prebuiltDir -Force | Out-Null
 
-          # Clean external folder (keep config.json)
-          $configBackup = Get-Content "$extDir\config.json" -Raw
-          Get-ChildItem -Path $extDir -Exclude "config.json" | Remove-Item -Recurse -Force
+          Copy-Item -Path "$extractedDir\*" -Destination $prebuiltDir -Recurse -Force
 
-          # Copy extracted files to external
-          Copy-Item -Path "$extractedDir\*" -Destination $extDir -Recurse -Force
-
-          # Restore config.json
-          Set-Content "$extDir\config.json" $configBackup
-
-          # Move fbx-conv to tools (as per config.json move_dirs)
-          if (Test-Path "$extDir\fbx-conv") {
+          # Move fbx-conv to tools
+          if (Test-Path "$prebuiltDir\fbx-conv") {
             $toolsDir = "tools\fbx-conv"
             if (Test-Path $toolsDir) { Remove-Item $toolsDir -Recurse -Force }
             New-Item -ItemType Directory -Path "tools" -Force | Out-Null
-            Move-Item "$extDir\fbx-conv" $toolsDir
+            Move-Item "$prebuiltDir\fbx-conv" $toolsDir
           }
 
           Remove-Item $zipPath -Force
           Remove-Item $tempExtract -Recurse -Force
-          Write-Host "External dependencies installed."
+          Write-Host "External dependencies ready."
+
+      - name: Install external dependencies into cocos2d-x
+        shell: pwsh
+        run: |
+          $extDir = "cocos2d-x\external"
+          $prebuiltDir = "cocos2d-x\external-prebuilt"
+
+          # Backup config.json
+          $configBackup = Get-Content "$extDir\config.json" -Raw
+
+          # Clean external folder
+          Get-ChildItem -Path $extDir -Exclude "config.json" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Copy prebuilt dependencies
+          Copy-Item -Path "$prebuiltDir\*" -Destination $extDir -Recurse -Force
+
+          # Restore config.json
+          Set-Content "$extDir\config.json" $configBackup
+
+          Write-Host "External dependencies installed into $extDir"
 
       - name: Configure CMake
         shell: pwsh
