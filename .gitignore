@@ -48,6 +48,7 @@ bin/
 Bin/
 out/
 Out/
+install/
 
 # CMake generated files
 CMakeFiles/
