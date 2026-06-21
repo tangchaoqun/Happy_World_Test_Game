@@ -12,23 +12,19 @@ jobs:
     name: Build Release (Win32)
 
     steps:
-      - name: Checkout repository (no submodules)
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache cocos2d-x engine
-        id: cache-cocos2dx
-        uses: actions/cache@v4
-        with:
-          path: cocos2d-x
-          key: cocos2d-x-v4-shallow
-
-      - name: Clone cocos2d-x engine
-        if: steps.cache-cocos2dx.outputs.cache-hit != 'true'
+      - name: Clone cocos2d-x submodule (shallow)
         shell: pwsh
         run: |
-          if (Test-Path "cocos2d-x") { Remove-Item "cocos2d-x" -Recurse -Force }
-          git clone --depth 1 --branch v4 https://github.com/cocos2d/cocos2d-x.git cocos2d-x
-          Write-Host "cocos2d-x cloned successfully."
+          if (-not (Test-Path "cocos2d-x\CMakeLists.txt")) {
+            if (Test-Path "cocos2d-x") { Remove-Item "cocos2d-x" -Recurse -Force }
+            git clone --depth 1 --branch v4 https://github.com/cocos2d/cocos2d-x.git cocos2d-x
+            Write-Host "cocos2d-x cloned."
+          } else {
+            Write-Host "cocos2d-x already present."
+          }
 
       - name: Cache cocos2d-x external dependencies
         id: cache-externals
@@ -57,7 +53,6 @@ jobs:
 
           Copy-Item -Path "$extractedDir\*" -Destination $prebuiltDir -Recurse -Force
 
-          # Move fbx-conv to tools
           if (Test-Path "$prebuiltDir\fbx-conv") {
             $toolsDir = "tools\fbx-conv"
             if (Test-Path $toolsDir) { Remove-Item $toolsDir -Recurse -Force }
@@ -67,27 +62,23 @@ jobs:
 
           Remove-Item $zipPath -Force
           Remove-Item $tempExtract -Recurse -Force
-          Write-Host "External dependencies ready."
+          Write-Host "External dependencies downloaded."
 
-      - name: Install external dependencies into cocos2d-x
+      - name: Install external dependencies
         shell: pwsh
         run: |
           $extDir = "cocos2d-x\external"
           $prebuiltDir = "cocos2d-x\external-prebuilt"
 
-          # Backup config.json
           $configBackup = Get-Content "$extDir\config.json" -Raw
 
-          # Clean external folder
           Get-ChildItem -Path $extDir -Exclude "config.json" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Copy prebuilt dependencies
           Copy-Item -Path "$prebuiltDir\*" -Destination $extDir -Recurse -Force
 
-          # Restore config.json
           Set-Content "$extDir\config.json" $configBackup
 
-          Write-Host "External dependencies installed into $extDir"
+          Write-Host "External dependencies installed."
 
       - name: Configure CMake
         shell: pwsh
